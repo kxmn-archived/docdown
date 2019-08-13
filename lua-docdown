@@ -1,0 +1,148 @@
+#!/usr/bin/lua
+
+require 'lfs'
+local p = {} -- processor
+local docs = {}
+local concat = table.concat
+local targetDir = arg[1] or './docs/'
+
+function fread(file)
+	local h = io.open(file,'r')
+	return coroutine.wrap(function()
+		for l in h:lines() do
+			coroutine.yield(l)
+		end
+		h:close()
+	end)
+end
+
+function pexec (cmd) 
+	local h = io.popen(cmd,'r')
+	return coroutine.wrap(function()
+		for l in h:lines() do
+			coroutine.yield(l)
+		end
+		h:close()
+	end)
+end
+
+local ENDED, STARTED, WRITING = 1,2,3
+
+p.processed = {}
+p.mdHeadLvl = 3
+
+function p:slugify(str)
+	return str:gsub('%W+','-'):gsub('^%-*',''):gsub('%-*$',''):lower()
+end
+
+
+function p:excerptOpen(line)
+	if self.state == ENDED then
+		local m,l,md = line:match('^%s*(%-%--)%[(=*)%[(md.*)$')
+		if m then
+			local file = md:match('^md%s*:%s*([^%s./]+)') or 'reference'
+			if not docs[file] then docs[file] = {toc={}, body={}, name=file} end
+			self.doc = docs[file]
+			self.doc.body[#(self.doc.body)+ 1] = "\n"
+			self._cmtLvl = l or ''
+			self.state = STARTED
+		end
+		return true
+	end
+	return false
+end
+
+-- Treat the lines considered the body of markdown
+-- first line of block can be considered topics if starts with #
+-- Observe that the if you jump the # level (ex. # to ###) you may
+-- break the table of contents (toc)
+function p:excerptBody(line)
+	local indent,content = line:match('^(%s*)(%S.*)$')
+	-- we map the indent variations to make it consistent
+	indent = indent and indent:gsub("\t",'    ') or ''
+	
+	if self.state == STARTED then
+		if content and #content then
+			local body
+			self.indent = indent 
+			local hmark, hcontent = content:match('^(#+)%s*(%S.+)')
+			if hmark and #hmark then
+				content=hcontent
+				local hurl = concat{'#',self:slugify(self.doc.name),'_',self:slugify(content)}
+				self.doc.toc[#(self.doc.toc) + 1] = concat{
+					string.rep('    ',#hmark - 1),
+					#hmark <= 2 and '1. ' or '* ',
+					'[```',content,'```](',hurl,')\n'
+				}
+				body = {hmark,hmark and ' ','``',content,'`` {',hurl,"}\n\n"}
+			else
+				body = {content,'\n'}
+			end
+			self.doc.body[#(self.doc.body) + 1] = concat(body)
+
+		else
+			self.doc.body[#(self.doc.body) + 1] = "\n"
+		end
+		self.state = WRITING
+		return true
+	elseif self.state == WRITING then
+		if content then
+			self.doc.body[#(self.doc.body) + 1] = concat{string.rep(' ',#(indent or '') - #self.indent),content,"\n"}
+		else
+			self.doc.body[#(self.doc.body) + 1] = "\n"
+		end
+		return true
+	end
+	
+	return false
+end
+
+function p:excerptClose(line)
+	local m = line:match('%]'..self._cmtLvl..'%]')
+	if self.state ~= ENDED and m then
+		self.doc.body[#(self.doc.body) + 1] = ''
+		self.state = ENDED
+		return true
+	end
+	return false
+end
+
+function p:file(f)
+	-- memoize init.lua inside directory
+	if self.processed[f] then
+		return
+	else
+		f = lfs.attributes(f).mode == 'directory' and f..'/init.lua' or f
+		self.processed[f]=1
+	end
+
+	-- read each file line	
+	local fattr = lfs.attributes(f)
+	local _ = false
+
+	if fattr and fattr.mode == 'file' then
+		self._cmtLvl = ''
+		self.state = ENDED
+		for line in fread(f) do
+			_ = self:excerptClose(line) or self:excerptOpen(line) or self:excerptBody(line)
+		end
+	end
+end	
+
+function p.addTimestamp(d)
+	d[#(d) + 1]='\n----------\n'
+	d[#(d) + 1]='Last update: '..os.date('%F %T %z')
+end
+
+--TODO: Needs a way system independent do get list of files
+for pathItem in pexec('find .|sort') do
+	p:file(pathItem)
+end
+lfs.mkdir(targetDir)
+for i,v in pairs(docs) do
+	local f = io.open(concat{targetDir,'/',i,'.md'},'w+')
+	p.addTimestamp(v.body)
+	v.body=concat(v.body):gsub('\n\n+','\n\n')
+	f:write(concat(v.toc),'\n\n',v.body)
+	f:close()
+end
