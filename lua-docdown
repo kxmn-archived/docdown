@@ -4,7 +4,13 @@ require 'lfs'
 local p = {} -- processor
 local docs = {}
 local concat = table.concat
-local targetDir = arg[1] or './docs/'
+if arg[1] == '--help' then
+	print('ldocdown sourceDir targetDir [ prefix ]')
+	os.exit()
+end
+local sourceDir = arg[1] or '.'
+local targetDir = arg[2] or '../docs/'
+local prefixFileName = arg[3] and arg[3]..'-' or ''
 
 function fread(file)
 	local h = io.open(file,'r')
@@ -74,7 +80,8 @@ function p:excerptBody(line)
 					#hmark <= 2 and '1. ' or '* ',
 					'[```',content,'```](',hurl,')\n'
 				}
-				body = {hmark,hmark and ' ','``',content,'`` {',hurl,"}\n\n"}
+				-- body = {hmark,hmark and ' ','``',content,'`` {',hurl,"}\n\n"}
+				body = {hmark,hmark and ' ',content,"\n\n"}
 			else
 				body = {content,'\n'}
 			end
@@ -112,8 +119,23 @@ function p:file(f)
 	if self.processed[f] then
 		return
 	else
-		f = lfs.attributes(f).mode == 'directory' and f..'/init.lua' or f
-		self.processed[f]=1
+		if lfs.attributes(f).mode == 'directory' then
+			local luafile,mdfile=f..'/init.lua', f..'/readme.md'
+			local _f = io.open(luafile,'r')
+			if _f then
+				self.processed[luafile] = 1
+				f = luafile
+				_f:close()
+			else
+				_f = io.open(mdfile,'r')
+				if _f then
+					docs.reference = docs.reference or { toc = {}, body={}, name=mdfile}
+					docs.reference.body[#(docs.reference.body) + 1] = _f:read('a')
+					_f:close()
+				end
+				return
+			end
+		end
 	end
 
 	-- read each file line	
@@ -135,14 +157,15 @@ function p.addTimestamp(d)
 end
 
 --TODO: Needs a way system independent do get list of files
-for pathItem in pexec('find .|sort') do
+for pathItem in pexec('find '..sourceDir..'|sort') do
 	p:file(pathItem)
 end
 lfs.mkdir(targetDir)
 for i,v in pairs(docs) do
-	local f = io.open(concat{targetDir,'/',i,'.md'},'w+')
+	local f = io.open(concat{targetDir,'/',prefixFileName,i,'.md'},'w+')
 	p.addTimestamp(v.body)
 	v.body=concat(v.body):gsub('\n\n+','\n\n')
-	f:write(concat(v.toc),'\n\n',v.body)
+	--f:write(concat(v.toc),'\n\n',v.body)
+	f:write(v.body)
 	f:close()
 end
