@@ -123,12 +123,14 @@ function p:file(f)
 			local luafile,mdfile=f..'/init.lua', f..'/readme.md'
 			local _f = io.open(luafile,'r')
 			if _f then
+				--print(luafile)
 				self.processed[luafile] = 1
 				f = luafile
 				_f:close()
 			else
 				_f = io.open(mdfile,'r')
 				if _f then
+					--print(mdfile)
 					docs.reference = docs.reference or { toc = {}, body={}, name=mdfile}
 					docs.reference.body[#(docs.reference.body) + 1] = _f:read('a')
 					_f:close()
@@ -145,6 +147,7 @@ function p:file(f)
 	if fattr and fattr.mode == 'file' then
 		self._cmtLvl = ''
 		self.state = ENDED
+		--print(f)
 		for line in fread(f) do
 			_ = self:excerptClose(line) or self:excerptOpen(line) or self:excerptBody(line)
 		end
@@ -157,7 +160,7 @@ function p.addTimestamp(d)
 end
 
 --TODO: Needs a way system independent do get list of files
-for pathItem in pexec('find '..sourceDir..'|sort') do
+for pathItem in pexec([[find ]]..sourceDir..[[ | grep -v '/\.' ]]) do
 	p:file(pathItem)
 end
 lfs.mkdir(targetDir)
